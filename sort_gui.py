@@ -1,163 +1,116 @@
 import tkinter as tk
-from collections import deque
-from itertools import combinations
+from tkinter import ttk
 import random
 
-class SortingApp:
+class VisualSorter:
     def __init__(self, root, lines):
         self.root = root
-        self.lines = list(set(lines))  # Remove duplicates
-        random.shuffle(self.lines)     # Avoid input order bias
-        
-        self.dag = {line: set() for line in self.lines}
-        self.undetermined_pairs = set(combinations(self.lines, 2))
-        self.current_pair = None
-        self.sorted_lines = []
-
+        self.working_list = lines.copy()
+        self.to_visit = self.working_list.copy()
+        self.current_focus = 0
         self.setup_gui()
-        self.next_pair()
+        self.pick_new_focus()
 
     def setup_gui(self):
-        self.root.title("Interactive Sorter")
-        
-        # Main frame
-        self.main_frame = tk.Frame(self.root, padx=20, pady=20)
-        self.main_frame.pack()
-
-        # Question label
-        self.question_label = tk.Label(
-            self.main_frame,
-            text="Which item should come first?",
-            font=('Arial', 14)
-        )
-        self.question_label.pack(pady=10)
-
-        # Options frame
-        self.options_frame = tk.Frame(self.main_frame)
-        self.options_frame.pack(pady=20)
-
-        # Left option
-        self.left_button = tk.Button(
-            self.options_frame,
-            text="", 
-            width=20,
-            height=3,
-            command=lambda: self.process_choice(0)
-        )
-        self.left_button.pack(side=tk.LEFT, padx=10)
-
-        # Right option
-        self.right_button = tk.Button(
-            self.options_frame,
+        self.root.title("List Editor")
+        self.root.geometry("1200x900")
+        self.root.configure(bg="#ffffff")
+        self.custom_font = ("Segoe UI", 11)
+        self.bold_font = ("Segoe UI", 12, "bold")
+        self.header_frame = tk.Frame(self.root, bg="#4090ff", height=60)
+        self.header_frame.pack(fill=tk.X, pady=(0,10))
+        self.current_label = tk.Label(
+            self.header_frame,
             text="",
-            width=20,
-            height=3,
-            command=lambda: self.process_choice(1)
-        )
-        self.right_button.pack(side=tk.RIGHT, padx=10)
+            font=self.bold_font,
+            bg="#4090ff",
+            fg="white",
+            cursor="hand2",
+            padx=20,
+            pady=10)
+        self.current_label.pack()
+        self.current_label.bind("<Button-1>", lambda e: self.pick_new_focus())
+        self.container = tk.Frame(self.root)
+        self.container.pack(fill=tk.BOTH, expand=True)
+        self.canvas = tk.Canvas(self.container, bg="white", highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self.container, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas, bg="white")
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
+        self.root.bind_all("<MouseWheel>", self.on_mousewheel)
+        self.root.bind_all("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
+        self.root.bind_all("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
 
-        # Progress label
-        self.progress_label = tk.Label(
-            self.main_frame,
-            text="",
-            font=('Arial', 10))
-        self.progress_label.pack(pady=10)
+    def create_gap(self, parent, insert_pos):
+        gap = tk.Frame(parent, height=30, bg="#f0f0f0", cursor="hand2")
+        gap.bind("<Enter>", lambda e: gap.config(bg="#d0d0d0"))
+        gap.bind("<Leave>", lambda e: gap.config(bg="#f0f0f0"))
+        gap.bind("<Button-1>", lambda e, pos=insert_pos: self.move_current_item(pos))
+        gap.pack(fill=tk.X, pady=0)
+        return gap
 
-        # Key bindings
-        self.root.bind('<Left>', lambda e: self.process_choice(0))
-        self.root.bind('<Right>', lambda e: self.process_choice(1))
+    def draw_context(self):
+        for w in self.scrollable_frame.winfo_children():
+            w.destroy()
+        for i, val in enumerate(self.working_list):
+            item_frame = tk.Frame(self.scrollable_frame, bg="white")
+            lbl = tk.Label(item_frame, text=val, font=self.custom_font, bg="#ffffff", fg="#333333", padx=20, pady=8, anchor="w", width=60)
+            lbl.pack(fill=tk.X)
+            if i == self.current_focus:
+                item_frame.config(bg="#fff3d6")
+                lbl.config(bg="#fff3d6", font=self.bold_font)
+                lbl.bind("<Button-1>", lambda e: self.pick_new_focus())
+                lbl.config(cursor="hand2")
+            else:
+                lbl.config(cursor="arrow")
+            item_frame.pack(fill=tk.X)
+            if i < len(self.working_list) - 1:
+                self.create_gap(self.scrollable_frame, i + 1)
+        self.canvas.update_idletasks()
+        idx = 2 * self.current_focus
+        y = self.scrollable_frame.winfo_children()[idx].winfo_y()
+        h = self.canvas.winfo_height()
+        total = self.scrollable_frame.winfo_height()
+        self.canvas.yview_moveto(max(0, min(1, (y - h//2) / total)))
 
-    def update_progress(self):
-        total = len(self.undetermined_pairs) + len(self.sorted_lines) * (len(self.sorted_lines) - 1) // 2
-        remaining = len(self.undetermined_pairs)
-        self.progress_label.config(
-            text=f"Progress: {total - remaining}/{total} comparisons made"
-        )
-
-    def next_pair(self):
-        self.update_progress()
-        
-        while self.undetermined_pairs:
-            pair = next(iter(self.undetermined_pairs), None)
-            if not pair:
-                break
-            
-            A, B = pair
-            if self.reaches(A, B):
-                self.undetermined_pairs.discard(pair)
-                continue
-            if self.reaches(B, A):
-                self.undetermined_pairs.discard(pair)
-                continue
-
-            self.current_pair = (A, B)
-            self.left_button.config(text=A, state=tk.NORMAL)
-            self.right_button.config(text=B, state=tk.NORMAL)
+    def move_current_item(self, new_pos):
+        if self.current_focus == new_pos:
             return
+        item = self.working_list.pop(self.current_focus)
+        if new_pos > self.current_focus:
+            new_pos -= 1
+        self.working_list.insert(new_pos, item)
+        with open("input.txt", "w") as f:
+            f.write("\n".join(self.working_list))
+        self.current_focus = new_pos
+        self.pick_new_focus()
 
-        # All pairs determined - sort and exit
-        self.sorted_lines = self.topological_sort()
-        with open('sorted_output.txt', 'w') as f:
-            f.write('\n'.join(self.sorted_lines))
-        self.root.destroy()
+    def pick_new_focus(self):
+        if not self.to_visit:
+            self.to_visit = self.working_list.copy()
+        item = random.choice(self.to_visit)
+        self.to_visit.remove(item)
+        self.current_focus = self.working_list.index(item)
+        self.current_label.config(text=item)
+        self.draw_context()
 
-    def reaches(self, source, target):
-        visited = set()
-        queue = deque([source])
-        while queue:
-            node = queue.popleft()
-            if node == target:
-                return True
-            if node not in visited:
-                visited.add(node)
-                queue.extend(self.dag[node])
-        return False
-
-    def process_choice(self, choice):
-        if not self.current_pair:
-            return
-
-        A, B = self.current_pair
-        if choice == 0:
-            self.dag[A].add(B)
-        else:
-            self.dag[B].add(A)
-
-        self.undetermined_pairs.discard(self.current_pair)
-        self.current_pair = None
-        self.left_button.config(state=tk.DISABLED)
-        self.right_button.config(state=tk.DISABLED)
-        self.root.after(100, self.next_pair)
-
-    def topological_sort(self):
-        in_degree = {node: 0 for node in self.lines}
-        for node in self.lines:
-            for neighbor in self.dag[node]:
-                in_degree[neighbor] += 1
-
-        queue = deque([node for node in self.lines if in_degree[node] == 0])
-        sorted_order = []
-
-        while queue:
-            node = queue.popleft()
-            sorted_order.append(node)
-            for neighbor in self.dag[node]:
-                in_degree[neighbor] -= 1
-                if in_degree[neighbor] == 0:
-                    queue.append(neighbor)
-
-        if len(sorted_order) != len(self.lines):
-            raise ValueError("Cycle detected - inconsistent user choices")
-        return sorted_order
+    def on_mousewheel(self, event):
+        self.canvas.yview_scroll(-1*(event.delta//120), "units")
 
 def main():
-    # Read input file
-    with open('input.txt', 'r') as f:
+    with open("input.txt") as f:
         lines = [line.strip() for line in f if line.strip()]
-
     root = tk.Tk()
-    app = SortingApp(root, lines)
+    VisualSorter(root, lines)
     root.mainloop()
 
 if __name__ == "__main__":
     main()
+
